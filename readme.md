@@ -19,5 +19,14 @@ python scripts/run_random_policy.py --visualize --food=3
 ```bash
 python scripts/run_expert_policy.py --visualize --food=3
 ```
+
+### MADDPG
+```bash
+ python main.py --n_episodes=5000
+```
+
 ## Note
 - used claude's help.
+
+## Issues
+- the output of lbforaging's states for each agent is diffferent, but i was assuming that it would be the same for all agents. since for making the Adverserial inverse RL working we need to have the same state for all agents.
