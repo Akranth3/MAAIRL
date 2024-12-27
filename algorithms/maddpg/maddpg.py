@@ -1,7 +1,7 @@
 import torch
 import numpy as np
-from agent import DDPGAgent
-from buffer import ReplayBuffer
+from algorithms.maddpg.agent import DDPGAgent
+from algorithms.maddpg.buffer import ReplayBuffer
 import torch.nn.functional as F
 
 class MADDPG:

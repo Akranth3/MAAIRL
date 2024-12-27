@@ -1,10 +1,6 @@
-import sys
-sys.path.append('../')
-sys.path.append('../algorithms/maddpg/')
-
 from pettingzoo.mpe import simple_adversary_v3
 import numpy as np
-from maddpg import MADDPG
+from algorithms.maddpg.maddpg import MADDPG
 import os
 from utils.model_short_summary import summary_model
 import argparse

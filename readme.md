@@ -1,12 +1,18 @@
 # MA AIRL from scratch
 
 ## Tasks
-- first implement the expert part of the algorithm
+- ~~first implement the expert part of the algorithm~~
+- ~~implement the MADDPG part of the algorithm~~
+- make the inverse RL part working.
 - the see if it is working for different envs
-- then implement the inverse RL part of it.
 
 ## environement details.
-- imprt the marlbase conda env to get the requirements.txt file.
+- ~~imprt the marlbase conda env to get the requirements.txt file.~~
+
+To create the conda environment, run the following command:
+```bash
+conda env create --name recoveredenv --file environment.yml
+```
 
 ## Running the Code
 

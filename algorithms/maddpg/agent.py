@@ -1,7 +1,7 @@
 import torch
 # import torch.nn.functional as F
 # import numpy as np
-from networks import ActorNetwork, CriticNetwork
+from algorithms.maddpg.networks import ActorNetwork, CriticNetwork
 
 class DDPGAgent:
     def __init__(self, actor_dims, critic_dims, n_actions, n_agents, agent_idx, 
