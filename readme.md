@@ -3,8 +3,14 @@
 ## Tasks
 - ~~first implement the expert part of the algorithm~~
 - ~~implement the MADDPG part of the algorithm~~
+- debug this 
+```bash
+python scripts/run_maairl.py 
+```
+- need to implement the expert buffer fromm the trajectories of maddpg.
 - make the inverse RL part working.
 - the see if it is working for different envs
+
 
 ## environement details.
 - ~~imprt the marlbase conda env to get the requirements.txt file.~~
