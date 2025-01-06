@@ -4,7 +4,8 @@ from algorithms.maddpg.maddpg import MADDPG
 import os
 from utils.model_short_summary import summary_model
 import argparse
-
+from utils.expert_trajectories import TrajectoryRecorder
+import pickle
 
 def evaluate(maddpg_agents, env, n_episodes=100):
     """
@@ -19,14 +20,14 @@ def evaluate(maddpg_agents, env, n_episodes=100):
         float: Mean score across all episodes
     """
     scores = []
-    
+    flag = True
     for episode in range(n_episodes):
         env.reset()
         score = 0
         
         for agent in env.agent_iter():
             observation, reward, done, truncated, info = env.last()
-            
+
             if done or truncated:
                 action = None
             else:
@@ -37,10 +38,52 @@ def evaluate(maddpg_agents, env, n_episodes=100):
             
             if done or truncated:
                 break
-        
         scores.append(score)
     
     return np.mean(scores)
+
+
+
+def evaluate_with_trajectories(maddpg_agents, env, n_episodes=100):
+    """
+    Evaluate MADDPG agents and record trajectories
+    """
+    scores = []
+    recorder = TrajectoryRecorder()
+    
+    for episode in range(n_episodes):
+        env.reset()
+        score = 0
+        recorder.start_episode()
+        
+        for agent in env.agent_iter():
+            observation, reward, done, truncated, info = env.last()
+            
+            if done or truncated:
+                action = None
+            else:
+                action = maddpg_agents.choose_actions(observation, agent, explore=False)
+                
+            # Record trajectory step
+            recorder.add_step(
+                episode + 1,  # Episodes start at 1
+                agent,
+                observation,
+                action,
+                reward
+            )
+            
+            env.step(action)
+            score += reward
+            
+            if done or truncated:
+                break
+                
+        scores.append(score)
+    
+
+        
+    return np.mean(scores), recorder
 
 def train_maddpg(args=None):
     env = simple_adversary_v3.env(continuous_actions=True)
@@ -147,5 +190,6 @@ if __name__ == '__main__':
     
     # Evaluate the trained agents
     env = simple_adversary_v3.env(continuous_actions=True)
-    mean_score = evaluate(maddpg_agents, env)
+    mean_score, expert_trajectories_data = evaluate_with_trajectories(maddpg_agents, env)
+    pickle.dump(expert_trajectories_data, open('../demonstration/maddpg/simple_adversary_expert_trajectories.pkl', 'wb'))
     print(f'Mean evaluation score: {mean_score:.2f}')

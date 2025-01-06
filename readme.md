@@ -7,7 +7,7 @@
 ```bash
 python scripts/run_maairl.py 
 ```
-- need to implement the expert buffer fromm the trajectories of maddpg.
+- ~~need to implement the expert buffer fromm the trajectories of maddpg.~~
 - make the inverse RL part working.
 - the see if it is working for different envs
 
