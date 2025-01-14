@@ -3,3 +3,6 @@ environments/
 docs/
 build/
 og_codebase/
+algorithms/mappo/videos/
+trajectories/trajectories_20250114_085245.pkl
+algorithms/IQL/videos/
