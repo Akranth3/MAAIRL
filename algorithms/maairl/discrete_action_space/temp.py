@@ -1,248 +1,122 @@
 import torch
+import numpy as np
+import pickle
+import gymnasium as gym
+import lbforaging
 import torch.nn as nn
 import torch.optim as optim
-import numpy as np
-from torch.distributions import Normal
-from typing import Dict, List, Tuple
-import pickle
-import lbforaging
-import gymnasium as gym
+
+# Hyperparameters
+GAMMA = 0.99
+LEARNING_RATE = 1e-3
+BATCH_SIZE = 64
+HIDDEN_DIM = 256
+NUM_EPOCHS = 10
 
 class RewardNetwork(nn.Module):
-    def __init__(self, obs_dim: int, act_dim: int, hidden_dim: int = 256):
+    def __init__(self, obs_dim, act_dim):
         super().__init__()
         self.network = nn.Sequential(
-            nn.Linear(obs_dim + act_dim, hidden_dim),
+            nn.Linear(obs_dim + act_dim, HIDDEN_DIM),
             nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim),
+            nn.Linear(HIDDEN_DIM, HIDDEN_DIM),
             nn.ReLU(),
-            nn.Linear(hidden_dim, 1)
+            nn.Linear(HIDDEN_DIM, 1)
         )
-        
+
     def forward(self, obs, actions):
         input_tensor = torch.cat([obs, actions], dim=-1)
         return self.network(input_tensor)
 
-class Discriminator(nn.Module):
-    def __init__(self, obs_dim: int, act_dim: int):
-        super().__init__()
-        self.reward = RewardNetwork(obs_dim, act_dim)
-        self.value = RewardNetwork(obs_dim, 0)  # State-only network for potential shaping
-        
-    def forward(self, obs, next_obs, actions):
-        """f_w,φ(s_t, a_t, s_t+1) = g_w(s_t, a_t) + γh_φ(s_t+1) - h_φ(s_t)"""
-        reward_val = self.reward(obs, actions)
-        value_next = self.value(next_obs, None)
-        value_current = self.value(obs, None)
-        
-        return reward_val + 0.99 * value_next - value_current
-
-class Policy(nn.Module):
-    def __init__(self, obs_dim: int, act_dim: int, hidden_dim: int = 256):
+class PolicyNetwork(nn.Module):
+    def __init__(self, state_dim, action_dim):
         super().__init__()
         self.network = nn.Sequential(
-            nn.Linear(obs_dim, hidden_dim),
+            nn.Linear(state_dim, HIDDEN_DIM),
             nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU()
+            nn.Linear(HIDDEN_DIM, HIDDEN_DIM),
+            nn.ReLU(),
+            nn.Linear(HIDDEN_DIM, action_dim),
+            nn.Softmax(dim=-1)
         )
-        
-        self.mean = nn.Linear(hidden_dim, act_dim)
-        self.log_std = nn.Parameter(torch.zeros(act_dim))
-        
-    def forward(self, obs):
-        features = self.network(obs)
-        mean = self.mean(features)
-        std = torch.exp(self.log_std)
-        return Normal(mean, std)
 
-class MAAIRL:
-    def __init__(
-        self,
-        obs_dim: int,
-        act_dim: int,
-        n_agents: int = 2,
-        lr: float = 3e-4,
-        gamma: float = 0.99
-    ):
-        self.n_agents = n_agents
-        self.gamma = gamma
-        
-        # Initialize discriminators and policies for each agent
-        self.discriminators = nn.ModuleList([
-            Discriminator(obs_dim, act_dim) for _ in range(n_agents)
-        ])
-        
-        self.policies = nn.ModuleList([
-            Policy(obs_dim, act_dim) for _ in range(n_agents)
-        ])
-        
-        # Initialize optimizers
-        self.disc_optimizers = [
-            optim.Adam(disc.parameters(), lr=lr) for disc in self.discriminators
-        ]
-        self.policy_optimizers = [
-            optim.Adam(policy.parameters(), lr=lr) for policy in self.policies
-        ]
-        
-    def process_trajectory_data(self, trajectories: Dict) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Convert trajectory dictionary to tensors"""
-        all_obs = []
-        all_next_obs = []
-        all_actions = []
-        
-        for traj_idx in range(len(trajectories)):
-            # Process each agent's data
-            agent_1_data = trajectories[traj_idx]['agent_1']
-            agent_2_data = trajectories[traj_idx]['agent_2']
-            
-            # Combine observations and actions
-            obs = torch.tensor(np.vstack([
-                agent_1_data['observations'][:-1],
-                agent_2_data['observations'][:-1]
-            ]), dtype=torch.float32)
-            
-            next_obs = torch.tensor(np.vstack([
-                agent_1_data['observations'][1:],
-                agent_2_data['observations'][1:]
-            ]), dtype=torch.float32)
-            
-            actions = torch.tensor(np.vstack([
-                agent_1_data['actions'][:-1],
-                agent_2_data['actions'][:-1]
-            ]), dtype=torch.float32)
-            
-            all_obs.append(obs)
-            all_next_obs.append(next_obs)
-            all_actions.append(actions)
-            
-        return (torch.cat(all_obs, dim=0),
-                torch.cat(all_next_obs, dim=0),
-                torch.cat(all_actions, dim=0))
+    def forward(self, state):
+        return self.network(state)
 
-    def discriminator_loss(self, 
-                          expert_obs: torch.Tensor,
-                          expert_next_obs: torch.Tensor,
-                          expert_actions: torch.Tensor,
-                          policy_obs: torch.Tensor,
-                          policy_next_obs: torch.Tensor,
-                          policy_actions: torch.Tensor,
-                          agent_idx: int) -> torch.Tensor:
-        """Compute discriminator loss for a specific agent"""
-        disc = self.discriminators[agent_idx]
-        
-        expert_scores = disc(expert_obs, expert_next_obs, expert_actions)
-        policy_scores = disc(policy_obs, policy_next_obs, policy_actions)
-        
-        # Compute loss as in the paper
-        expert_loss = -torch.mean(torch.log(torch.sigmoid(expert_scores)))
-        policy_loss = -torch.mean(torch.log(1 - torch.sigmoid(policy_scores)))
-        
-        return expert_loss + policy_loss
+class Discriminator(nn.Module):
+    def __init__(self, obs_dim, act_dim):
+        super().__init__()
+        self.reward_net = RewardNetwork(obs_dim, act_dim)
+        self.value_net = RewardNetwork(obs_dim, 0)  # State-only network
 
-    def policy_loss(self,
-                   obs: torch.Tensor,
-                   next_obs: torch.Tensor,
-                   agent_idx: int) -> torch.Tensor:
-        """Compute policy loss for a specific agent"""
-        policy = self.policies[agent_idx]
-        disc = self.discriminators[agent_idx]
-        
-        # Sample actions from policy
-        dist = policy(obs)
-        actions = dist.rsample()
-        
-        # Get reward signal from discriminator
-        rewards = disc(obs, next_obs, actions)
-        
-        # Policy gradient loss
-        policy_loss = -torch.mean(rewards)
-        
-        # Add entropy regularization
-        entropy_loss = -torch.mean(dist.entropy())
-        
-        return policy_loss + 0.01 * entropy_loss
+    def forward(self, obs, next_obs, actions):
+        reward = self.reward_net(obs, actions)
+        next_value = self.value_net(next_obs, None)
+        current_value = self.value_net(obs, None)
+        return reward + GAMMA * next_value - current_value
 
-    def train_step(self, expert_trajectories: Dict, policy_trajectories: Dict):
-        """Perform one training step"""
-        # Process trajectory data
-        expert_obs, expert_next_obs, expert_actions = self.process_trajectory_data(expert_trajectories)
-        policy_obs, policy_next_obs, policy_actions = self.process_trajectory_data(policy_trajectories)
-        
-        # Update discriminators
-        for i in range(self.n_agents):
-            self.disc_optimizers[i].zero_grad()
-            disc_loss = self.discriminator_loss(
-                expert_obs, expert_next_obs, expert_actions,
-                policy_obs, policy_next_obs, policy_actions,
-                i
-            )
-            disc_loss.backward()
-            self.disc_optimizers[i].step()
-        
-        # Update policies
-        for i in range(self.n_agents):
-            self.policy_optimizers[i].zero_grad()
-            policy_loss = self.policy_loss(policy_obs, policy_next_obs, i)
-            policy_loss.backward()
-            self.policy_optimizers[i].step()
-            
-    def train(self, 
-              expert_trajectories: Dict,
-              n_epochs: int = 1000,
-              batch_size: int = 64):
-        """Main training loop"""
-        for epoch in range(n_epochs):
-            # Sample policy trajectories using current policies
-            policy_trajectories = self.sample_trajectories(batch_size)
-            
-            # Perform training step
-            self.train_step(expert_trajectories, policy_trajectories)
-            
-            if epoch % 100 == 0:
-                print(f"Epoch {epoch}/{n_epochs}")
-                
-    def sample_trajectories(self, batch_size: int) -> Dict:
-        """
-        Sample trajectories using current policies
-        This should be implemented based on your specific environment
-        """
-        # Placeholder - implement based on your environment
-        env = gym.make("Foraging-8x8-2p-3f-v3")
-        
+def load_expert_data(filepath):
+    with open(filepath, 'rb') as f:
+        return pickle.load(f)
 
+def sample_trajectory(env, policy):
+    obs, _ = env.reset()
+    done = False
+    trajectory = []
+    while not done:
+        state = torch.tensor(np.concatenate(obs), dtype=torch.float32)
+        action_probs = policy(state)
+        actions = [torch.multinomial(action_probs[:env.action_space.n], 1).item()
+                   for _ in range(env.n_agents)]
+        next_obs, reward, done, _, _ = env.step(actions)
+        trajectory.append((obs, actions, reward, next_obs))
+        obs = next_obs
+    return trajectory
 
-        pass
+def compute_loss(discriminator, policy, expert_data, env):
+    policy_trajectories = [sample_trajectory(env, policy) for _ in range(BATCH_SIZE)]
+    
+    expert_obs = torch.cat([torch.tensor(d[0], dtype=torch.float32) for traj in expert_data for d in traj])
+    expert_actions = torch.cat([torch.tensor(d[1], dtype=torch.float32) for traj in expert_data for d in traj])
+    
+    policy_obs = torch.cat([torch.tensor(d[0], dtype=torch.float32) for traj in policy_trajectories for d in traj])
+    policy_actions = torch.cat([torch.tensor(d[1], dtype=torch.float32) for traj in policy_trajectories for d in traj])
 
-    def save(self, path: str):
-        """Save the model"""
-        torch.save({
-            'discriminators': self.discriminators.state_dict(),
-            'policies': self.policies.state_dict(),
-        }, path)
+    expert_scores = discriminator(expert_obs, None, expert_actions)
+    policy_scores = discriminator(policy_obs, None, policy_actions)
 
-    def load(self, path: str):
-        """Load the model"""
-        checkpoint = torch.load(path)
-        self.discriminators.load_state_dict(checkpoint['discriminators'])
-        self.policies.load_state_dict(checkpoint['policies'])
+    expert_loss = torch.mean(-torch.log(expert_scores + 1e-8))
+    policy_loss = torch.mean(-torch.log(1 - policy_scores + 1e-8))
+
+    return expert_loss + policy_loss
+
+def train(env_name, expert_data_path):
+    env = gym.make(env_name)
+    obs_dim = env.observation_space[0].shape[0]
+    act_dim = env.action_space.n
+
+    policy = PolicyNetwork(2 * obs_dim, act_dim)
+    discriminator = Discriminator(obs_dim, act_dim)
+
+    policy_optimizer = optim.Adam(policy.parameters(), lr=LEARNING_RATE)
+    discriminator_optimizer = optim.Adam(discriminator.parameters(), lr=LEARNING_RATE)
+
+    expert_data = load_expert_data(expert_data_path)
+
+    for epoch in range(NUM_EPOCHS):
+        discriminator_optimizer.zero_grad()
+        loss = compute_loss(discriminator, policy, expert_data, env)
+        loss.backward()
+        discriminator_optimizer.step()
+
+        policy_optimizer.zero_grad()
+        policy_loss = -torch.mean(discriminator(torch.tensor(env.reset()[0]), None, policy))
+        policy_loss.backward()
+        policy_optimizer.step()
+
+        print(f"Epoch {epoch+1}/{NUM_EPOCHS}, Loss: {loss.item():.4f}")
 
 if __name__ == "__main__":
-    # Load expert trajectories
-    with open('../../../trajectories/trajectories_20250114_085245.pkl', 'rb') as f:
-        expert_trajectories = pickle.load(f)
-
-    print("expert data size: ",len(expert_trajectories['trajectories']))
-        
-    # Initialize MAAIRL agent
-    agent = MAAIRL(obs_dim=15, act_dim=6)
-    print(agent)
-    print(agent.policies)
-    print(agent.discriminators)
-    # Train the agent
-    # agent.train(expert_trajectories)
-    
-    # Save the model
-    agent.save('maairl_model.pth')
-
-    
+    ENV_NAME = "Foraging-8x8-2p-3f-v3"
+    EXPERT_DATA_PATH = "../../../trajectories/trajectories_20250114_110817.pkl"
+    train(ENV_NAME, EXPERT_DATA_PATH)

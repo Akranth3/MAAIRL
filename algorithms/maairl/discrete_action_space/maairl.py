@@ -190,6 +190,11 @@ def main(obs_dim, act_dim, hidden_dim):
     print("doing sanity check on f functions")
     sanity_check_f(agents["agent_0"]["f"], agents["agent_1"]["f"], trajectories)
 
+    num_epochs = 10
+    for epoch in range(1, num_epochs+1):
+        batch_size = 32
+        for i in range(2):
+            
 
 
 
